@@ -1,0 +1,328 @@
+---
+title: "Untitled"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## GitHub Documents
+
+This is an R Markdown format used for publishing markdown documents to GitHub. When you click the **Knit** button all R code chunks are run and a markdown file (.md) suitable for publishing to GitHub is generated.
+
+## Including Code
+
+You can include R code in the document as follows:
+
+```{r cars}
+#__________________________________________________________________________________________________________________________________
+
+# Investment case study
+
+# Objective: Provide data-backed suggestions to Spark Funds, an assess management company, 
+# to help them identify suitable investment targets based on best sectors, countries and investment types, 
+# satisfying their 2 constraints:
+# 1. Invest between 5M- 15M per round
+# 2. Only invest in English-speaking countries, recognized by English being one of their official languages.
+
+# Strategy: Spark only wants to invest where others are investing.
+
+# Goals: To analyze global investment trends as provided by 3 data sets from crunchbase - companies, rounds2 and mapping.
+#   1. Analyze investment types.
+#   2. Analyze countries
+#   3. Analyze sectors
+
+# This R file holds the key to answering all questions pertaining to the 3 goals listed above.
+
+#__________________________________________________________________________________________________________________________________
+
+# Install packages needed if not already present
+
+installed_packages <- installed.packages()[,1]
+isFuzzyJoinInstalled <- "fuzzyjoin" %in% installed_packages
+isTidyrInstalled <- "tidyr" %in% installed_packages
+isDplyrInstalled <- "dplyr" %in% installed_packages
+isStringrInstalled <- "stringr" %in% installed_packages
+
+if(!isTidyrInstalled) {
+  install.packages("tidyr")
+}
+
+if(!isDplyrInstalled) {
+  install.packages("dplyr")
+}
+
+if(!isStringrInstalled) {
+  install.packages("stringr")
+}
+
+if(!isFuzzyJoinInstalled) {
+  install.packages("fuzzyjoin")
+}
+
+#__________________________________________________________________________________________________________________________________
+
+
+# Load all necessary data manipulation packages.
+
+library(tidyr)
+library(dplyr)
+library(stringr)
+library(fuzzyjoin)
+
+#__________________________________________________________________________________________________________________________________
+
+# Stage 1: Data Understanding
+
+#__________________________________________________________________________________________________________________________________
+
+# Step 1: Load all the given data sets - companies, rounds2 and mapping
+
+# Load companies data frame. Encode in UTF-8 to treat international characters in permalink, name correcty.
+companies <- read.delim("companies.txt", stringsAsFactors = FALSE, check.names = FALSE)
+
+#Load rounds2. Encode in UTF-8 to treat international characters in permalink, name correcty.
+rounds2 <- read.csv("rounds2.csv", stringsAsFactors = FALSE, check.names = FALSE)
+
+#Load mapping
+mapping_cat_sec <- read.csv("mapping.csv", stringsAsFactors = FALSE, check.names = FALSE)
+
+# Step 2: View the data sets to glean insights about their structure, relationships, cardinality, granularity and business-specific nuances
+View(companies)
+View(rounds2)
+View(mapping_cat_sec)
+
+# Basic understanding of the data sets
+#   companies: 
+#     -> Every row in this data frame corresponds to a unique company as identified by the key field permalink
+#     -> Fields include: permalink, name, homepage_url, category_list, status, country_code, state_code, region, city, founded_at
+#     -> Every company is mapped to multiple categories among which the first one is its primary category
+#   rounds2:
+#     -> Each row represents a funding received by a company in a specific investment type and round.
+#     -> Fields include: company_permalink, funding_round_permalink, funding_round_type, funding_round_code, funded_at, raised_amount_usd
+#     -> company_permalink is a reference field, referring to companies$permalink
+#   mapping:
+#     -> Given in wide format
+#     -> Maps a company category to a sector.
+
+#__________________________________________________________________________________________________________________________________
+
+# Stage 2: Data cleaning and preparation
+
+#__________________________________________________________________________________________________________________________________
+
+#convert mapping data set from wide to long format
+mapping <- gather(mapping_cat_sec,sector,value,`Automotive & Sports`:`Social, Finance, Analytics, Advertising`)
+mapping <- mapping[!(mapping$value == 0),]
+mapping <- mapping[, -3]
+
+# The key field permalink may contain duplicates due to case mismatch.
+# Add a new key field by converting permalink to uppercase.
+
+#companies
+company_mutated <- mutate(companies, upper_permalink = str_to_upper(permalink))
+
+# In rounds2, the reference key field permalink may contain duplicates due to case mismatch.
+# Add a new key field by converting company_permalink to uppercase.
+
+rounds2_mutated <- mutate(rounds2, upper_permalink = str_to_upper(company_permalink))
+
+# Merge companies and rounds2 data sets
+
+# Creating master_frame
+master_frame <- merge(x = rounds2_mutated, y = company_mutated, by = "upper_permalink", all.x = T)
+#number of records in master_frame is 114949
+
+# Separate out primary category from category list. 
+# Ignore warnings.
+# Warnings appear since the number of categories listed in the field "category_list"
+# is variable, but we are interested in only the first one.
+
+master_frame <- separate(master_frame, category_list, into=c("primary_cat"),sep="\\|",remove=F)
+View(master_frame)
+# master_frame contains 114949 records now also. 
+
+
+#__________________________________________________________________________________________________________________________________
+
+# Stage 3: Data analysis
+
+#__________________________________________________________________________________________________________________________________
+
+# Table -1.1
+
+
+# 1. How many unique companies are present in rounds2?
+nrow(distinct(rounds2_mutated, upper_permalink))
+
+# 2. How many unique companies are present in the companies file?
+nrow(distinct(company_mutated, upper_permalink))
+
+# 3. In the companies data frame, which column can be used as the unique key for each company? Write the name of the column.
+nrow(distinct(companies, permalink)) == nrow(companies)
+
+# 4. Are there any companies in the rounds2 file which are not present in companies ? Answer Y/N.
+length(setdiff(rounds2_mutated$upper_permalink, company_mutated$upper_permalink))
+
+# 5. Merge the two data frames so that all variables (columns) in the companies frame are added to the rounds2 data frame.
+# Name the merged frame master_frame.How many observations are present in master_frame ?
+nrow(master_frame)
+
+
+#__________________________________________________________________________________________________________________________________
+
+# Table 2-1
+
+#__________________________________________________________________________________________________________________________________
+
+# Q 1-4
+# Find the mean of raised amount (investment) for each funding type
+#Average funding amount of venture type
+#Average funding amount of angel type
+#Average funding amount of seed type
+#Average funding amount of private equity type
+
+funding_type_mean <- summarise(group_by(master_frame,funding_round_type), avg_amount_raised = mean(raised_amount_usd, na.rm=T))
+View(funding_type_mean)
+
+
+# Based on the condition that we need to look at only angel, seed, private_equity and venture funding types,
+# and that per round investment can only be between 5M and 15M, store the best suitable funding type in chosen_funding_type.
+
+chosen_funding_type <- filter(funding_type_mean, funding_round_type %in% c("angel", "seed", "private_equity", "venture") & between(avg_amount_raised, 5000000, 15000000))
+chosen_funding_type <- as.character(arrange(chosen_funding_type, desc(avg_amount_raised))[1, "funding_round_type"])
+chosen_funding_type
+
+
+#__________________________________________________________________________________________________________________________________
+
+#Table 3-1
+
+#__________________________________________________________________________________________________________________________________
+
+# Spark Funds wants to see the top nine countries which have received the highest total funding 
+# (across ALL sectors for the chosen investment type)
+
+master_frame <- filter(master_frame, funding_round_type == chosen_funding_type)
+View(master_frame)
+
+
+
+# For the chosen investment type, make a data frame named top9 with the top nine countries 
+# (based on the total investment amount each country has received)
+raised_amounts_by_countries <- summarise(group_by(master_frame, country_code), raised_amount = sum(raised_amount_usd,na.rm = T))
+
+top9 <- head(arrange(raised_amounts_by_countries, desc(raised_amount)), 9)
+View(top9)
+
+# Identify Top 3 English speaking countries
+
+# To do this, we have to first map country_codes (distinct countrycodes in companies$country_code) to "English_speaking"
+# Mapped "English_Speaking" to country codes by looking up country codes against 
+# http://www.emmir.org/fileadmin/user_upload/admission/Countries_where_English_is_an_official_language.pdf
+# Named the file as countrycode.csv with 2 fields - country_code and English_Speaking 
+countrycode <- read.csv("countrycode.csv", stringsAsFactors = FALSE)
+View(countrycode)
+
+# Out of the top9 countries as stored in the data frame top9, filter only the top 3 English speaking countries
+top3 <- merge(top9, countrycode, by = "country_code")
+top3 <- head(arrange(filter(top3, English_speaking == 1), desc(raised_amount)), 3)$country_code
+
+
+
+View(top3)
+
+# Found that USA, GBR and IND are the top 3 English-speaking countries with highest investments in Venture funding type.
+
+#__________________________________________________________________________________________________________________________________
+
+# Table 4-1
+
+#__________________________________________________________________________________________________________________________________
+
+
+# Mapping sector to primary category an merging with the master frame
+# Performing an inner join here. Ignoring primary category entries which do not have a sector mapping.
+# If the primary category has no sector mapping, those data rows cannot be included in sector analysis.
+# Also, mapping$category_list has some entries with incorrectly spelt categories, where the string "0"
+# has replaced "na"s. Hence applying fuzzy_inner_join to use a custom matching function which
+# maps the strings accurately.
+
+category_matching_function <- function(master_frame_col, mapping_col) {
+  correctedCol <- sub("0", "na", mapping_col )
+  ret = (mapping_col == master_frame_col) |
+          (str_to_upper(correctedCol) == str_to_upper(master_frame_col))
+  ret
+}
+
+main_sector <- master_frame %>% fuzzy_inner_join(mapping, by = c(primary_cat = "category_list"), category_matching_function) 
+
+# Only 8 sectors are considered. Removing Blanks
+main_sector <- filter(main_sector, sector != "Blanks")
+  
+
+# Answer the following questions for USA, GBR and IND, given the constraint that Spark only wants to
+# invest 5M to 15M per round, and only in venture funding type
+
+#Total number of Investments (count)
+#Total amount of investment (USD)
+#Top Sector name (no. of investment-wise)
+#Second Sector name (no. of investment-wise)
+#Third Sector name (no. of investment-wise)
+#Number of investments in top sector (3)
+#Number of investments in second sector (4)
+#Number of investments in third sector (5)
+#For point 3 (top sector count-wise), which company received the highest investment?
+#For point 4 (second best sector count-wise), which company received the highest investment?
+
+# Create data frames D1, D2, D3
+D1_interm_c1 <- filter(main_sector, country_code == top3[1] & raised_amount_usd >= 5000000 & raised_amount_usd <= 15000000)
+D1 <- group_by(D1_interm_c1, sector) %>% summarise(count_inv = length(permalink), total_inv = sum(raised_amount_usd, na.rm=T))
+D1 <- arrange(D1, desc(count_inv))
+View(D1)
+
+
+D2_interm_c2 <- filter(main_sector, country_code == top3[2] & raised_amount_usd >= 5000000 & raised_amount_usd <= 15000000)
+D2 <- group_by(D2_interm_c2, sector) %>% summarise(count_inv = length(permalink), total_inv = sum(raised_amount_usd,na.rm = T))
+D2 <- arrange(D2, desc(count_inv))
+View(D2)
+
+D3_interm_c3 <- filter(main_sector, country_code == top3[3] & raised_amount_usd >= 5000000 & raised_amount_usd <= 15000000)
+D3 <- group_by(D3_interm_c3, sector) %>% summarise(count_inv = length(permalink), total_inv = sum(raised_amount_usd, na.rm = T))
+D3 <- arrange(D3, desc(count_inv))
+View(D3)
+
+
+# To answer questions 1 and 2, for the 3 countries C1,C2 and C3 as found in top3
+summarise(D1, cnt = sum(count_inv), tot = sum(total_inv))
+summarise(D2, cnt = sum(count_inv), tot = sum(total_inv))
+summarise(D3, cnt = sum(count_inv), tot = sum(total_inv))
+
+#To answer questions 9 and 10, for the 3 countries - C1, C2, C3
+# For C1, in the top sector, the best company 
+arrange(summarise(group_by(filter(D1_interm_c1,sector == D1$sector[1]), upper_permalink), tot = sum(raised_amount_usd, na.rm=T), nm = unique(name)), desc(tot))$nm[1]
+
+# For C1, in 2nd top sector, the best company
+arrange(summarise(group_by(filter(D1_interm_c1,sector == D1$sector[2]), upper_permalink), tot = sum(raised_amount_usd, na.rm=T), nm = unique(name)), desc(tot))$nm[1]
+
+# For C2, in the top sector, the best company 
+arrange(summarise(group_by(filter(D2_interm_c2,sector == D2$sector[1]), upper_permalink), tot = sum(raised_amount_usd, na.rm=T), nm = unique(name)), desc(tot))$nm[1]
+
+# For C2, in 2nd top sector, the best company
+arrange(summarise(group_by(filter(D2_interm_c2,sector == D2$sector[2]), upper_permalink), tot = sum(raised_amount_usd, na.rm=T), nm = unique(name)), desc(tot))$nm[1]
+
+# For C3, in the top sector, the best company 
+arrange(summarise(group_by(filter(D3_interm_c3,sector == D3$sector[1]), upper_permalink), tot = sum(raised_amount_usd, na.rm=T), nm = unique(name)), desc(tot))$nm[1]
+
+# For C3, in 2nd top sector, the best company
+arrange(summarise(group_by(filter(D3_interm_c3,sector == D3$sector[2]), upper_permalink), tot = sum(raised_amount_usd, na.rm=T), nm = unique(name)), desc(tot))$nm[1]
+
+
+# Denormalizing D1 to include all fields of main_sector df as per instructions
+D1 <- merge(D1_interm_c1, D1, by = "sector")
+D2 <- merge(D2_interm_c2, D2, by = "sector")
+D3 <- merge(D3_interm_c3, D3, by = "sector")
+
+```
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
